@@ -192,6 +192,7 @@ class _ChatPageState extends State<ChatPage> {
   final ChatDatabase _database = ChatDatabase();
   final List<MessageRecord> _messages = [];
   final TextEditingController _messageController = TextEditingController();
+  final ScrollController _messagesScrollController = ScrollController();
 
   late final TextEditingController _localPortController;
   late final TextEditingController _remoteHostController;
@@ -200,6 +201,7 @@ class _ChatPageState extends State<ChatPage> {
 
   RawDatagramSocket? _socket;
   StreamSubscription<RawSocketEvent>? _socketSubscription;
+  Timer? _receiveTimer;
   bool _running = false;
   String _status = 'Ожидание запуска';
 
@@ -219,9 +221,12 @@ class _ChatPageState extends State<ChatPage> {
 
   @override
   void dispose() {
-    _stopSocket();
+    _receiveTimer?.cancel();
+    _socketSubscription?.cancel();
+    _socket?.close();
     _database.close();
     _messageController.dispose();
+    _messagesScrollController.dispose();
     _localPortController.dispose();
     _remoteHostController.dispose();
     _remotePortController.dispose();
@@ -229,14 +234,14 @@ class _ChatPageState extends State<ChatPage> {
     super.dispose();
   }
 
-  Future<String> _resolveDbPath() async {
+  Future<String> _resolveDbPath(int localPort) async {
     final enteredPath = _dbPathController.text.trim();
     if (enteredPath.isNotEmpty) {
       return enteredPath;
     }
 
     final directory = await getApplicationDocumentsDirectory();
-    final dbPath = p.join(directory.path, 'udp_chat_log.db');
+    final dbPath = p.join(directory.path, 'udp_chat_$localPort.db');
     _dbPathController.text = dbPath;
     return dbPath;
   }
@@ -250,38 +255,49 @@ class _ChatPageState extends State<ChatPage> {
     }
 
     try {
-      final dbPath = await _resolveDbPath();
+      await _stopSocket();
+
+      final dbPath = await _resolveDbPath(localPort);
       _database.open(dbPath);
       final oldMessages = _database.loadMessages();
 
       final socket = await RawDatagramSocket.bind(
         InternetAddress.anyIPv4,
         localPort,
-        reuseAddress: true,
       );
       socket.readEventsEnabled = true;
-      _socketSubscription = socket.listen(_handleSocketEvent);
+      _socket = socket;
+      _socketSubscription = socket.listen((event) {
+        if (event == RawSocketEvent.read) {
+          _readIncomingDatagrams(socket);
+        }
+      });
+      _receiveTimer = Timer.periodic(
+        const Duration(milliseconds: 200),
+        (_) => _readIncomingDatagrams(socket),
+      );
 
       setState(() {
-        _socket = socket;
         _running = true;
         _messages
           ..clear()
           ..addAll(oldMessages);
         _status = 'Запущено. Локальный порт: $localPort';
       });
+      _scrollMessagesToBottom();
     } catch (error) {
       _showMessage('Ошибка запуска: $error');
     }
   }
 
-  void _handleSocketEvent(RawSocketEvent event) {
-    if (event != RawSocketEvent.read) {
+  void _readIncomingDatagrams(RawDatagramSocket socket) {
+    if (_socket != socket || !_database.isOpen) {
       return;
     }
 
+    final received = <MessageRecord>[];
     Datagram? datagram;
-    while ((datagram = _socket?.receive()) != null) {
+    while ((datagram = socket.receive()) != null) {
       final current = datagram!;
       final text = utf8.decode(current.data, allowMalformed: true);
       final record = _database.insertMessage(
@@ -290,14 +306,21 @@ class _ChatPageState extends State<ChatPage> {
         peerPort: current.port,
         text: text,
       );
-
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _messages.add(record);
-      });
+      received.add(record);
     }
+
+    socket.readEventsEnabled = true;
+
+    if (received.isEmpty || !mounted) {
+      return;
+    }
+
+    setState(() {
+      _messages.addAll(received);
+      final last = received.last;
+      _status = 'Получено от ${last.peerHost}:${last.peerPort}';
+    });
+    _scrollMessagesToBottom();
   }
 
   Future<void> _sendMessage() async {
@@ -339,7 +362,9 @@ class _ChatPageState extends State<ChatPage> {
       setState(() {
         _messages.add(record);
         _messageController.clear();
+        _status = 'Отправлено на ${address.address}:$remotePort';
       });
+      _scrollMessagesToBottom();
     } catch (error) {
       _showMessage('Ошибка отправки: $error');
     }
@@ -354,6 +379,8 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   Future<void> _stopSocket() async {
+    _receiveTimer?.cancel();
+    _receiveTimer = null;
     await _socketSubscription?.cancel();
     _socketSubscription = null;
     _socket?.close();
@@ -367,6 +394,19 @@ class _ChatPageState extends State<ChatPage> {
       _running = false;
       _status = 'Остановлено';
     }
+  }
+
+  void _scrollMessagesToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_messagesScrollController.hasClients) {
+        return;
+      }
+      _messagesScrollController.animateTo(
+        _messagesScrollController.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOut,
+      );
+    });
   }
 
   void _showMessage(String message) {
@@ -429,7 +469,7 @@ class _ChatPageState extends State<ChatPage> {
           label: 'Путь к SQLite БД',
           enabled: !_running,
           width: 420,
-          hint: 'пусто = udp_chat_log.db в документах приложения',
+          hint: 'пусто = отдельная БД по локальному порту',
         ),
         FilledButton.icon(
           onPressed: _running ? _stopSocket : _startSocket,
@@ -453,6 +493,7 @@ class _ChatPageState extends State<ChatPage> {
         borderRadius: BorderRadius.circular(8),
       ),
       child: ListView.separated(
+        controller: _messagesScrollController,
         padding: const EdgeInsets.all(8),
         itemCount: _messages.length,
         separatorBuilder: (_, _) => const Divider(height: 1),
