@@ -20,4 +20,24 @@ class Teacher : public Person {};
       'Person',
     ]);
   });
+
+  test('layout places inherited class under its real parent', () {
+    final classes = parseHeaderClasses('''
+class Entity {};
+class Person : public Entity {};
+class Employee : public Person {};
+class Order : public Entity {};
+class OnlineOrder : public Order {};
+''');
+    final layout = buildDiagramLayout(classes);
+
+    final onlineOrderX = layout.positions['OnlineOrder']!.dx;
+    final orderX = layout.positions['Order']!.dx;
+    final personX = layout.positions['Person']!.dx;
+
+    expect(
+      (onlineOrderX - orderX).abs(),
+      lessThan((onlineOrderX - personX).abs()),
+    );
+  });
 }

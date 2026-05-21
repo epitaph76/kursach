@@ -85,71 +85,108 @@ DiagramLayout buildDiagramLayout(List<ClassInfo> classes) {
   const padding = 40.0;
 
   final byName = {for (final item in classes) item.name: item};
-  final levelCache = <String, int>{};
+  final childrenByParent = <String, List<ClassInfo>>{
+    for (final item in classes) item.name: <ClassInfo>[],
+  };
+  final classOrder = {
+    for (var index = 0; index < classes.length; index++)
+      classes[index].name: index,
+  };
+  final primaryParent = <String, String?>{};
 
-  int levelOf(String name, Set<String> stack) {
-    if (levelCache.containsKey(name)) {
-      return levelCache[name]!;
-    }
-    final item = byName[name];
-    if (item == null || item.bases.isEmpty || stack.contains(name)) {
-      levelCache[name] = 0;
-      return 0;
-    }
-
+  for (final item in classes) {
     final knownBases = item.bases.where(byName.containsKey).toList();
-    if (knownBases.isEmpty) {
-      levelCache[name] = 0;
-      return 0;
+    final parent = knownBases.isEmpty ? null : knownBases.first;
+    primaryParent[item.name] = parent;
+    if (parent != null) {
+      childrenByParent[parent]!.add(item);
+    }
+  }
+
+  for (final children in childrenByParent.values) {
+    children.sort((a, b) => classOrder[a.name]!.compareTo(classOrder[b.name]!));
+  }
+
+  var roots = classes
+      .where((item) => primaryParent[item.name] == null)
+      .toList();
+  if (roots.isEmpty) {
+    roots = classes.toList();
+  }
+  roots.sort((a, b) => classOrder[a.name]!.compareTo(classOrder[b.name]!));
+
+  final subtreeWidthCache = <String, double>{};
+  double subtreeWidth(String name, Set<String> stack) {
+    final cached = subtreeWidthCache[name];
+    if (cached != null) {
+      return cached;
+    }
+    if (stack.contains(name)) {
+      return nodeWidth;
+    }
+
+    final children = childrenByParent[name] ?? [];
+    if (children.isEmpty) {
+      subtreeWidthCache[name] = nodeWidth;
+      return nodeWidth;
     }
 
     final nextStack = {...stack, name};
-    final level =
-        1 +
-        knownBases
-            .map((base) => levelOf(base, nextStack))
-            .reduce((a, b) => math.max(a, b));
-    levelCache[name] = level;
-    return level;
-  }
-
-  for (final item in classes) {
-    levelOf(item.name, {});
-  }
-
-  final levels = <int, List<ClassInfo>>{};
-  for (final item in classes) {
-    levels.putIfAbsent(levelCache[item.name] ?? 0, () => []).add(item);
-  }
-  for (final level in levels.values) {
-    level.sort((a, b) => a.name.compareTo(b.name));
+    final childrenWidth =
+        children
+            .map((child) => subtreeWidth(child.name, nextStack))
+            .reduce((a, b) => a + b) +
+        (children.length - 1) * xGap;
+    final width = math.max(nodeWidth, childrenWidth);
+    subtreeWidthCache[name] = width;
+    return width;
   }
 
   final positions = <String, Offset>{};
-  var maxWidth = 0.0;
   var maxLevel = 0;
-  for (final entry in levels.entries) {
-    final level = entry.key;
-    final items = entry.value;
+  void placeSubtree(String name, double left, int level, Set<String> stack) {
+    if (stack.contains(name)) {
+      return;
+    }
     maxLevel = math.max(maxLevel, level);
-    final rowWidth = items.length * nodeWidth + (items.length - 1) * xGap;
-    maxWidth = math.max(maxWidth, rowWidth);
-  }
 
-  for (final entry in levels.entries) {
-    final level = entry.key;
-    final items = entry.value;
-    final rowWidth = items.length * nodeWidth + (items.length - 1) * xGap;
-    var x = padding + (maxWidth - rowWidth) / 2;
+    final width = subtreeWidth(name, {});
+    final x = left + (width - nodeWidth) / 2;
     final y = padding + level * (nodeHeight + yGap);
+    positions[name] = Offset(x, y);
 
-    for (final item in items) {
-      positions[item.name] = Offset(x, y);
-      x += nodeWidth + xGap;
+    final children = childrenByParent[name] ?? [];
+    if (children.isEmpty) {
+      return;
+    }
+
+    final nextStack = {...stack, name};
+    final childrenWidth =
+        children
+            .map((child) => subtreeWidth(child.name, nextStack))
+            .reduce((a, b) => a + b) +
+        (children.length - 1) * xGap;
+    var childLeft = left + (width - childrenWidth) / 2;
+
+    for (final child in children) {
+      final childWidth = subtreeWidth(child.name, nextStack);
+      placeSubtree(child.name, childLeft, level + 1, nextStack);
+      childLeft += childWidth + xGap;
     }
   }
 
-  final width = math.max(720.0, maxWidth + padding * 2);
+  final rootWidths = roots.map((root) => subtreeWidth(root.name, {})).toList();
+  final contentWidth = rootWidths.isEmpty
+      ? nodeWidth
+      : rootWidths.reduce((a, b) => a + b) + (roots.length - 1) * xGap;
+
+  var left = padding;
+  for (var index = 0; index < roots.length; index++) {
+    placeSubtree(roots[index].name, left, 0, {});
+    left += rootWidths[index] + xGap;
+  }
+
+  final width = math.max(720.0, contentWidth + padding * 2);
   final height = math.max(
     420.0,
     padding * 2 + (maxLevel + 1) * nodeHeight + maxLevel * yGap,
