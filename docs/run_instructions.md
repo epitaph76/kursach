@@ -75,6 +75,26 @@ flutter run -d windows -- --db=C:\Temp\chat2.db --local-port=5002 --remote-host=
 - первое окно: локальный порт `5001`, порт собеседника `5002`;
 - второе окно: локальный порт `5002`, порт собеседника `5001`.
 
+Linux-сборка задания 3 находится в:
+
+```text
+C:\Users\epitaph\VYZ\kursov\zadanie_3_udp_chat\build\linux\x64\release\bundle
+```
+
+Для переноса на Linux удобнее использовать архив:
+
+```text
+C:\Users\epitaph\VYZ\kursov\zadanie_3_udp_chat\build\linux\x64\release\zadanie_3_udp_chat_linux_x64.tar.gz
+```
+
+На Linux его можно распаковать и запустить:
+
+```bash
+tar -xzf zadanie_3_udp_chat_linux_x64.tar.gz
+cd bundle
+./zadanie_3_udp_chat
+```
+
 ## Команды проверки
 
 Для каждого проекта:
