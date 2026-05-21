@@ -289,15 +289,19 @@ class _ClassDiagramPageState extends State<ClassDiagramPage> {
                     : ClipRRect(
                         borderRadius: BorderRadius.circular(8),
                         child: InteractiveViewer(
+                          constrained: false,
                           minScale: 0.3,
                           maxScale: 3,
                           boundaryMargin: const EdgeInsets.all(300),
-                          child: CustomPaint(
-                            size: layout.size,
-                            painter: ClassDiagramPainter(
-                              classes: _classes,
-                              layout: layout,
-                              colorScheme: Theme.of(context).colorScheme,
+                          child: SizedBox(
+                            width: layout.size.width,
+                            height: layout.size.height,
+                            child: CustomPaint(
+                              painter: ClassDiagramPainter(
+                                classes: _classes,
+                                layout: layout,
+                                colorScheme: Theme.of(context).colorScheme,
+                              ),
                             ),
                           ),
                         ),
